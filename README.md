@@ -21,3 +21,13 @@ miasta B jest 10 samochodów, z czego 4 oczekują w kolejce przed mostem. Po uru
 programu z parametrem -debug należy wypisywać całą zawartość kolejek po obu stronach 
 mostu, nie tylko ilość samochodów. Komunikat należy wypisywać w momencie, kiedy w 
 programie zmieni się którakolwiek z tych wartości.
+
+# Samochody:
+### Stany w jakich moga sie znajdowac samochody:
+- A - w miescie A
+- a - czeka na wjazd na most opuszczajac miasto A
+- M - przejezdza przez most z A do B
+- m - przejezdza przez most z B do A 
+- B - w miescie B
+- b - czeka na wjazd na most opuszczajac miasto B
+- 0 - stan niezdefiniowany

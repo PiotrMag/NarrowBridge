@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 // Funkcja ladujaca argumenty z lini polecen
 //
@@ -45,6 +46,23 @@ int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug) {
 }
 
 
+// Funkcja samochodu (kazdy samochod wykonuje takie samo zadanie - 
+// jezdzenie miedzy miastem A i B)
+//
+// Argument:
+// [arg] - numer samochodu
+void *driveAround(void *arg) {
+
+    // odczytanie numeru samochodu
+    int carNumber = *((int*)arg) + 1;
+
+    // testowanie
+    printf("%d\n", carNumber);
+
+    return 0;
+}
+
+
 // Do prawidowego dziaania funkcji main powinny byc
 // przekazane z konsoli dwa argumenty [tryb] i [N]
 // gdzie:
@@ -70,8 +88,35 @@ int main (int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // testowanie
-    printf("%d %d %d\n", mode, N, debug);
+    // dzialanie programu
+    if (mode == 0) {
 
-    return EXIT_SUCCESS;
+        // utworzenie zmiennych potrzebnych do prawidlowego dzialania mutexow
+        pthread_mutex_t bridge;
+        pthread_t cars[N]; 
+        int carNumber[N];
+
+        pthread_mutex_init(&bridge, NULL);
+
+        // utworzenie watkow
+        int i;
+        for ( i = 0; i < N; ++i ) {
+            carNumber[i] = i;
+            pthread_create(&cars[i], NULL, driveAround, (void*)&carNumber[i]);
+        }
+
+        for ( i = 0; i < N; ++i ) {
+            pthread_join(cars[i], NULL);
+        }
+
+        // zwolnienie niepotrzebnych zmiennych
+        pthread_mutex_destroy(&bridge);
+
+        return  EXIT_SUCCESS;
+    }
+
+
+    // jezeli zaden z warunkuow if'a sie nie wykonal to znaczy
+    // ze byl jakis blad
+    return EXIT_FAILURE;
 }

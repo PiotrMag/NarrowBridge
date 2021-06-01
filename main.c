@@ -4,7 +4,10 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#include <semaphore.h>
 
+
+sem_t printer;
 pthread_mutex_t bridge;
 pthread_t *cars;
 int *carsNumbers;
@@ -96,6 +99,7 @@ void printCurrentState() {
     printf("\033[0;40;37m-\033[0m");
     printf("%d ", inA);
     printf("\033[0;40;91m%d\033[0m", leavingA);
+    //todo: wypisanie lity oczekujacych samochodow
     printf("\033[0;40;37m>>>\033[0m");
 
     if (onBridge >= 0 && bridgeDirection >= 0 && bridgeDirection <= 1) {
@@ -109,6 +113,7 @@ void printCurrentState() {
     }
     
     printf("\033[0;40;37m<<<\033[0m");
+    //todo: wypisanie listy oczekujacych samochodow
     printf("\033[0;40;91m%d\033[0m", leavingB);
     printf(" %d", inB);
     printf("\033[0;40;37m-\033[0m");
@@ -153,7 +158,13 @@ void *driveAround(void *arg) {
 
         // zmienila sie stan jednego z samochodow, wiec
         // trzeba na nowo wypisac stan programu w konsoli
+        if (sem_wait(&printer) == -1) {
+            perror("Blad sem_wait (przed lock)");
+        }
         printCurrentState();
+        if (sem_post(&printer) == -1) {
+            perror("Blad sem_post (przed lock)");
+        }
 
         // przejscie do oczekiwania na zwolnienie mostu
         pthread_mutex_lock(&bridge);
@@ -169,7 +180,13 @@ void *driveAround(void *arg) {
             }
 
             // wypisanie obecnego stanu wszystkich samochodow
+            if (sem_wait(&printer) == -1) {
+                perror("Blad sem_wait (przed zwolnieniem mostu)");
+            }
             printCurrentState();
+            if (sem_post(&printer) == -1) {
+                perror("Blad sem_post (przed zwolnieniem mostu)");
+            }
 
             // pomocnicze opoznienie w celu pokazania, ze samochod
             // faktycznie przejechal przez most
@@ -184,7 +201,13 @@ void *driveAround(void *arg) {
 
             // wypisanie w konsoli nowego stanu systemu
             // (po wyjechaniu samochodu z mostu)
+            if (sem_wait(&printer) == -1) {
+                perror("Blad sem_wait (po zwolnieniu mostu)");
+            }
             printCurrentState();
+            if (sem_post(&printer) == -1) {
+                perror("Blad sem_post (po zwolnieniu mostu)");
+            }
 
             // odczekanie chwili po zwolnieniu mostu
             usleep(bridgeLeaveDelayMillis * 1000);
@@ -217,6 +240,11 @@ int main (int argc, char *argv[]) {
     mode = -1;
     N = -1;
     debug = 0;
+
+    if (sem_init(&printer, 0, 1) != 0) {
+        perror("Blad sem_init");
+        return EXIT_FAILURE;
+    }
 
     // zaladowanie argumentow z linii polecen
     int result = loadCmdLineArgs(argc, argv, &mode, &N, &debug);

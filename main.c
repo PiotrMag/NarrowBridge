@@ -9,6 +9,11 @@
 
 sem_t printer;
 pthread_mutex_t bridge;
+pthread_cond_t next_one;
+
+pthread_mutex_t ticket_mutex;
+int current_number = 0, next_number = 0;
+
 pthread_t *cars;
 int *carsNumbers;
 char *carsState;
@@ -132,6 +137,10 @@ void *driveAround(void *arg) {
     // odczytanie numeru samochodu
     int carNumber = *((int*)arg) + 1;
 
+    // zmienna pomocnicza, przechowujaca numer biletu
+    // samochodu (uzywana tylko dla tryb == 1)
+    int ticket_number = -1;
+
     // zmienna pomocnicza
     char oldState = '0';
 
@@ -166,8 +175,24 @@ void *driveAround(void *arg) {
             perror("Blad sem_post (przed lock)");
         }
 
+        // jezeli tryb == 1 (na zmiennych warunkowych)
+        // to nalezy pobrac bilet i czekac na wpuszczenie na most
+        if (mode == 1) {
+            pthread_mutex_lock(&ticket_mutex);
+            ticket_number = next_number;
+            next_number += 1;
+            pthread_mutex_unlock(&ticket_mutex);
+        }
+
         // przejscie do oczekiwania na zwolnienie mostu
         pthread_mutex_lock(&bridge);
+
+            if (mode == 1) {
+                while (current_number != ticket_number) {
+                    pthread_cond_wait(&next_one, &bridge);
+                }
+            }
+
             // zapisanie stanu samochodu, zeby pozniej bylo wiadomo
             // do kotrego miasta jechal
             oldState = carsState[carNumber-1];
@@ -211,6 +236,13 @@ void *driveAround(void *arg) {
 
             // odczekanie chwili po zwolnieniu mostu
             usleep(bridgeLeaveDelayMillis * 1000);
+
+            if (mode == 1) {
+                pthread_mutex_lock(&ticket_mutex);
+                current_number += 1;
+                pthread_mutex_unlock(&ticket_mutex);
+                pthread_cond_broadcast(&next_one);
+            }
         pthread_mutex_unlock(&bridge);
 
         sleep(rand() % 10 + 1);
@@ -241,6 +273,7 @@ int main (int argc, char *argv[]) {
     N = -1;
     debug = 0;
 
+    // inicjalizacja semafora chroniacego wypisywanie na konsole
     if (sem_init(&printer, 0, 1) != 0) {
         perror("Blad sem_init");
         return EXIT_FAILURE;
@@ -254,44 +287,39 @@ int main (int argc, char *argv[]) {
     }
 
     // dzialanie programu
-    if (mode == 0) {
-
-        pthread_mutex_init(&bridge, NULL);
-
-        // allokacja tablic
-        cars = (pthread_t*)malloc(N * sizeof(pthread_t));
-        carsNumbers = (int*)malloc(N * sizeof(int));
-        carsState = (char*)malloc(N * sizeof(char));
-
-        // zaladowanie wartosci wstepnych do tablicy carsState
-        // przechowujacej stan w jakim znajduja sie poszczegolne
-        // samochody (domyslnie na starcie wszystkie sa w miescie A)
-        int i;
-        for (i = 0; i< N; i++) {
-            carsState[i] = 'A';
-        }
-
-        // utworzenie watkow
-        for ( i = 0; i < N; ++i ) {
-            carsNumbers[i] = i;
-            pthread_create(&cars[i], NULL, driveAround, (void*)&carsNumbers[i]);
-        }
-
-        for ( i = 0; i < N; ++i ) {
-            pthread_join(cars[i], NULL);
-        }
-
-        // zwolnienie niepotrzebnych zmiennych
-        free(cars);
-        free(carsNumbers);
-        free(carsState);
-        pthread_mutex_destroy(&bridge);
-
-        return  EXIT_SUCCESS;
+    pthread_mutex_init(&bridge, NULL);
+    if (mode == 1) {
+        pthread_cond_init(&next_one, NULL);
     }
 
+    // allokacja tablic
+    cars = (pthread_t*)malloc(N * sizeof(pthread_t));
+    carsNumbers = (int*)malloc(N * sizeof(int));
+    carsState = (char*)malloc(N * sizeof(char));
 
-    // jezeli zaden z warunkuow if'a sie nie wykonal to znaczy
-    // ze byl jakis blad
-    return EXIT_FAILURE;
+    // zaladowanie wartosci wstepnych do tablicy carsState
+    // przechowujacej stan w jakim znajduja sie poszczegolne
+    // samochody (domyslnie na starcie wszystkie sa w miescie A)
+    int i;
+    for (i = 0; i< N; i++) {
+        carsState[i] = 'A';
+    }
+
+    // utworzenie watkow
+    for ( i = 0; i < N; ++i ) {
+        carsNumbers[i] = i;
+        pthread_create(&cars[i], NULL, driveAround, (void*)&carsNumbers[i]);
+    }
+
+    for ( i = 0; i < N; ++i ) {
+        pthread_join(cars[i], NULL);
+    }
+
+    // zwolnienie niepotrzebnych zmiennych
+    free(cars);
+    free(carsNumbers);
+    free(carsState);
+    pthread_mutex_destroy(&bridge);
+
+    return  EXIT_SUCCESS;
 }

@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <semaphore.h>
 
-
 sem_t printer;
 pthread_mutex_t bridge;
 pthread_cond_t next_one;
@@ -17,12 +16,97 @@ int current_number = 0, next_number = 0;
 pthread_t *cars;
 int *carsNumbers;
 char *carsState;
+int *carsTicket;
 
 short mode;
 int N;
 short debug;
 
-const int bridgeLeaveDelayMillis = 500;
+const int bridgeLeaveDelayMillis = 0;
+const int maxSleepDelaySeconds = 0;
+
+// prosta struktura przechowujaca dwie wartosci int
+// potrzebna do przechowywania numeru biletu samochodu
+// oraz numeru samochodu przy wypisywania list kolejnosci
+// samochodow w kolejkach do mostu
+typedef struct IntTuple {
+    int first, second;
+} IntTuple;
+
+// struktura przechowujaca pojednyczy element listy
+struct Node {
+    IntTuple value;
+    struct Node *next;
+};
+typedef struct Node Node;
+
+// funkcja dodajaca element do listy, w takim miejscu
+// zeby lista byla posortowana rosnaco wzgledem 
+// IntTuple.first
+//
+// potrzebne do wyswietlania listy samochodow czekajacych 
+// na wjazd na most od strony miasta B
+void list_add_ascending(Node **starting_node, Node *new_node) {
+    if (*starting_node == NULL) {
+        *starting_node = new_node;
+    } else {
+        Node *current_node = *starting_node;
+        if (current_node->value.first > new_node->value.first) {
+            *starting_node = new_node;
+            new_node->next = current_node;
+        } else {
+            while (current_node->next != NULL) {
+                if (current_node->next->value.first > new_node->value.first) {
+                    break;
+                }
+                current_node = current_node->next;
+            }
+            new_node->next = current_node->next;
+            current_node->next = new_node;
+        }
+    }
+}
+
+// funkcja dodajaca element do listy, w takim miejscu
+// zeby lista byla posortowana malejaco wzgledem 
+// IntTuple.first
+//
+// potrzebne do wyswietlania listy samochodow czekajacych 
+// na wjazd na most od strony miasta A
+void list_add_descending(Node **starting_node, Node *new_node) {
+    if (*starting_node == NULL) {
+        *starting_node = new_node;
+    } else {
+        Node *current_node = *starting_node;
+        if (current_node->value.first <= new_node->value.first) {
+            *starting_node = new_node;
+            new_node->next = current_node;
+        } else {
+            while (current_node->next != NULL) {
+                if (current_node->next->value.first <= new_node->value.first) {
+                    break;
+                }
+                current_node = current_node->next;
+            }
+            new_node->next = current_node->next;
+            current_node->next = new_node;
+        }
+    }
+}
+
+// funkcja usuwajaca wszystkie elementy listy (zwalnia pamiec)
+void delete_list(Node **startingNode) {
+    // printf("del\n");
+    Node *current_node = *startingNode;
+    Node *next_node;
+    while (current_node != NULL)
+    {
+        next_node = current_node->next;
+        free(current_node);
+        current_node = next_node;
+    }
+    *startingNode = NULL;
+}
 
 // Funkcja ladujaca argumenty z lini polecen
 //
@@ -70,6 +154,7 @@ int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug) {
 void printCurrentState() {
 
     int inA = 0, leavingA = 0, leavingB = 0, inB = 0, onBridge = -1, bridgeDirection = -1;
+    Node *startingANode = NULL, *startingBNode = NULL;
 
     // zliczenie odpowiednich wartosci na podstawie tablicy stanow samochodow
     int i;
@@ -80,6 +165,18 @@ void printCurrentState() {
                 break;
             case 'a':
                 leavingA += 1;
+                if (debug && carsTicket[i] >= 0) {
+                    Node *new_node = (Node*)malloc(sizeof(Node));
+                    if (new_node != NULL) {
+                        if (mode == 0) {
+                            new_node->value.first = 0;
+                        } else {
+                            new_node->value.first = carsTicket[i];
+                        }
+                        new_node->value.second = i+1;
+                        list_add_descending(&startingANode, new_node);
+                    }
+                }
                 break;
             case 'M':
                 onBridge = i+1;
@@ -91,6 +188,18 @@ void printCurrentState() {
                 break;
             case 'b':
                 leavingB += 1;
+                if (debug && carsTicket >= 0) {
+                    Node *new_node = (Node*)malloc(sizeof(Node));
+                    if (new_node != NULL) {
+                        if (mode == 0) {
+                            new_node->value.first = 0;
+                        } else {
+                            new_node->value.first = carsTicket[i];
+                        }
+                        new_node->value.second = i+1;
+                        list_add_ascending(&startingBNode, new_node);
+                    }
+                }
                 break;
             case 'B':
                 inB += 1;
@@ -104,7 +213,15 @@ void printCurrentState() {
     printf("\033[0;40;37m-\033[0m");
     printf("%d ", inA);
     printf("\033[0;40;91m%d\033[0m", leavingA);
-    //todo: wypisanie lity oczekujacych samochodow
+    if (debug) {
+        printf("[");
+        Node *tmp = startingANode;
+        while (tmp != NULL) {
+            printf("%d ", tmp->value.second);
+            tmp = tmp->next;
+        }
+        printf("] ");
+    }
     printf("\033[0;40;37m>>>\033[0m");
 
     if (onBridge >= 0 && bridgeDirection >= 0 && bridgeDirection <= 1) {
@@ -118,12 +235,25 @@ void printCurrentState() {
     }
     
     printf("\033[0;40;37m<<<\033[0m");
-    //todo: wypisanie listy oczekujacych samochodow
+    if (debug) {
+        printf(" [");
+        Node *tmp = startingBNode;
+        while (tmp != NULL) {
+            printf("%d ", tmp->value.second);
+            tmp = tmp->next;
+        }
+        printf("]");
+    }
     printf("\033[0;40;91m%d\033[0m", leavingB);
     printf(" %d", inB);
     printf("\033[0;40;37m-\033[0m");
     printf("\033[0;43;30mB\033[0m                         ");
     fflush(stdout);
+
+    if (debug) {
+        delete_list(&startingANode);
+        delete_list(&startingBNode);
+    }
 }
 
 
@@ -165,6 +295,16 @@ void *driveAround(void *arg) {
             carsState[carNumber-1] = 'b';
         }
 
+        // jezeli tryb == 1 (na zmiennych warunkowych)
+        // to nalezy pobrac bilet i czekac na wpuszczenie na most
+        if (mode == 1) {
+            pthread_mutex_lock(&ticket_mutex);
+            ticket_number = next_number;
+            carsTicket[carNumber-1] = ticket_number;
+            next_number += 1;
+            pthread_mutex_unlock(&ticket_mutex);
+        }
+
         // zmienila sie stan jednego z samochodow, wiec
         // trzeba na nowo wypisac stan programu w konsoli
         if (sem_wait(&printer) == -1) {
@@ -173,15 +313,6 @@ void *driveAround(void *arg) {
         printCurrentState();
         if (sem_post(&printer) == -1) {
             perror("Blad sem_post (przed lock)");
-        }
-
-        // jezeli tryb == 1 (na zmiennych warunkowych)
-        // to nalezy pobrac bilet i czekac na wpuszczenie na most
-        if (mode == 1) {
-            pthread_mutex_lock(&ticket_mutex);
-            ticket_number = next_number;
-            next_number += 1;
-            pthread_mutex_unlock(&ticket_mutex);
         }
 
         // przejscie do oczekiwania na zwolnienie mostu
@@ -206,11 +337,11 @@ void *driveAround(void *arg) {
 
             // wypisanie obecnego stanu wszystkich samochodow
             if (sem_wait(&printer) == -1) {
-                perror("Blad sem_wait (przed zwolnieniem mostu)");
+                perror("\nBlad sem_wait (przed zwolnieniem mostu)\n");
             }
             printCurrentState();
             if (sem_post(&printer) == -1) {
-                perror("Blad sem_post (przed zwolnieniem mostu)");
+                perror("\nBlad sem_post (przed zwolnieniem mostu)\n");
             }
 
             // pomocnicze opoznienie w celu pokazania, ze samochod
@@ -227,11 +358,11 @@ void *driveAround(void *arg) {
             // wypisanie w konsoli nowego stanu systemu
             // (po wyjechaniu samochodu z mostu)
             if (sem_wait(&printer) == -1) {
-                perror("Blad sem_wait (po zwolnieniu mostu)");
+                perror("\nBlad sem_wait (po zwolnieniu mostu)\n");
             }
             printCurrentState();
             if (sem_post(&printer) == -1) {
-                perror("Blad sem_post (po zwolnieniu mostu)");
+                perror("\nBlad sem_post (po zwolnieniu mostu)\n");
             }
 
             // odczekanie chwili po zwolnieniu mostu
@@ -240,12 +371,13 @@ void *driveAround(void *arg) {
             if (mode == 1) {
                 pthread_mutex_lock(&ticket_mutex);
                 current_number += 1;
+                carsTicket[carNumber-1] = -1; // oznaczenie, ze bilet zostal wykorzystany
                 pthread_mutex_unlock(&ticket_mutex);
                 pthread_cond_broadcast(&next_one);
             }
         pthread_mutex_unlock(&bridge);
 
-        sleep(rand() % 10 + 1);
+        sleep(rand() % (maxSleepDelaySeconds+1));
     }
 
     return 0;
@@ -296,6 +428,7 @@ int main (int argc, char *argv[]) {
     cars = (pthread_t*)malloc(N * sizeof(pthread_t));
     carsNumbers = (int*)malloc(N * sizeof(int));
     carsState = (char*)malloc(N * sizeof(char));
+    carsTicket = (int*)malloc(N * sizeof(int));
 
     // zaladowanie wartosci wstepnych do tablicy carsState
     // przechowujacej stan w jakim znajduja sie poszczegolne
@@ -303,6 +436,12 @@ int main (int argc, char *argv[]) {
     int i;
     for (i = 0; i< N; i++) {
         carsState[i] = 'A';
+    }
+
+    // zaladowanie wartosci startowych do tablicy przechowujacej
+    // numery biletow poszczegolnych samochodow
+    for (i = 0; i < N; i++) {
+        carsTicket[i] = -1;
     }
 
     // utworzenie watkow
@@ -319,6 +458,7 @@ int main (int argc, char *argv[]) {
     free(cars);
     free(carsNumbers);
     free(carsState);
+    free(carsTicket);
     pthread_mutex_destroy(&bridge);
 
     return  EXIT_SUCCESS;

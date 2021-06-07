@@ -11,7 +11,7 @@ test3: app
 	./a.out 1 10
 
 test4: app
-	./a.out 0 1000
+	./a.out 0 1000 -fast
 
 test5: app
 	./a.out 1 10 -debug

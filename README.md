@@ -30,4 +30,6 @@ programie zmieni się którakolwiek z tych wartości.
 - m - przejezdza przez most z B do A 
 - B - w miescie B
 - b - czeka na wjazd na most opuszczajac miasto B
-- 0 - stan niezdefiniowany
+
+# Dodatkowe informacje:
+- Dodana zostala dodatkowa flaga `-fast`, ktora powoduje wylaczenie oczekiwania na moscie oraz oczekiwania w miescie

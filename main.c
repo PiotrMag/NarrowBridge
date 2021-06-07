@@ -25,6 +25,7 @@ int *carsTicket;
 short mode;
 int N;
 short debug;
+short fast;
 
 // stale informujace o opoznieniach, jakie maja byc
 // uwzglednione w programie
@@ -121,11 +122,11 @@ void delete_list(Node **startingNode) {
 // Zwraca:
 // 1 <- jezeli byl blad
 // 0 <- jezeli bylo wszystko OK
-int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug) {
+int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug, short* fast) {
 
     // sprwdzenie, czy zostala podana minimalna wymnagana ilosc argumentow
     if (argc < 3) {
-        printf("Za malo argumentow\nMusi byc: tryb N [-debug]\n");
+        printf("Za malo argumentow\nMusi byc: tryb N [-debug] [-fast]\n");
         return EXIT_FAILURE;
     }
 
@@ -147,9 +148,13 @@ int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug) {
     }
 
     // ewentualne sprawdzenie, czy podana zostala flaga [-debug]
-    if (argc >= 4) {
-        if (strcmp(argv[3], "-debug") == 0) {
+    // lub -fast
+    int i;
+    for (i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "-debug") == 0) {
             *debug = 1;
+        } else if (strcmp(argv[i], "-fast") == 0) {
+            *fast = 1;
         }
     }
 
@@ -212,7 +217,7 @@ void printCurrentState() {
                 break;
             case 'b':
                 leavingB += 1;
-                if (debug && carsTicket >= 0) {
+                if (debug && carsTicket[i] >= 0) {
                     Node *new_node = (Node*)malloc(sizeof(Node));
                     if (new_node != NULL) {
                         if (mode == 0) {
@@ -280,6 +285,15 @@ void printCurrentState() {
     }
 }
 
+// Funkcja odwiedzania miasta
+//
+// Sprowadza sie do odczekania odpowiedniego czasu
+// w miescie (przez samochod)
+void visitCity() {
+    if (!fast) {
+        sleep(rand() % (maxSleepDelaySeconds+1));
+    }
+}
 
 // Funkcja samochodu (kazdy samochod wykonuje takie samo zadanie - 
 // jezdzenie miedzy miastem A i B)
@@ -322,29 +336,37 @@ void *driveAround(void *arg) {
         // jezeli tryb == 1 (na zmiennych warunkowych)
         // to nalezy pobrac bilet i czekac na wpuszczenie na most
         if (mode == 1) {
-            pthread_mutex_lock(&ticket_mutex);
-            ticket_number = next_number;
-            carsTicket[carNumber-1] = ticket_number;
-            next_number += 1;
-            pthread_mutex_unlock(&ticket_mutex);
+            if (pthread_mutex_lock(&ticket_mutex) == 0) {
+                ticket_number = next_number;
+                carsTicket[carNumber-1] = ticket_number;
+                next_number += 1;
+                if (pthread_mutex_unlock(&ticket_mutex) != 0) {
+                    printf("\nNie udalo sie pthread_mutex_unlock, samochod=%d\n", carNumber);
+                    exit(EXIT_FAILURE);
+                }
+            } else {
+                printf("\nNie udalo sie pthread_mutex_lock, samochod=%d\n", carNumber);
+            }
         }
 
-        // zmienila sie stan jednego z samochodow, wiec
+        // zmienil sie stan jednego z samochodow, wiec
         // trzeba na nowo wypisac stan programu w konsoli
         if (sem_wait(&printer) == -1) {
-            perror("Blad sem_wait (przed lock)");
+            perror("\nBlad sem_wait (przed lock)\n");
         }
         printCurrentState();
         if (sem_post(&printer) == -1) {
-            perror("Blad sem_post (przed lock)");
+            perror("\nBlad sem_post (przed lock)\n");
         }
 
         // przejscie do oczekiwania na zwolnienie mostu
-        pthread_mutex_lock(&bridge);
+        if (pthread_mutex_lock(&bridge) == 0) {
 
             if (mode == 1) {
                 while (current_number != ticket_number) {
-                    pthread_cond_wait(&next_one, &bridge);
+                    if (pthread_cond_wait(&next_one, &bridge) != 0) {
+                        printf("\nBlad dla pthread_cond_wait, samochod=%d\n", carNumber);
+                    }
                 }
             }
 
@@ -369,8 +391,10 @@ void *driveAround(void *arg) {
             }
 
             // pomocnicze opoznienie w celu pokazania, ze samochod
-            // faktycznie przejechal przez most
-            usleep(bridgeLeaveDelayMillis * 1000);
+            // faktycznie przejechal przez most (ale tylko w trybie nie fast)
+            if (!fast) {
+                usleep(bridgeLeaveDelayMillis * 1000);
+            }
 
             // przejazd samochodu do odpowiedniego miasta
             if (oldState == 'a') {
@@ -389,19 +413,37 @@ void *driveAround(void *arg) {
                 perror("\nBlad sem_post (po zwolnieniu mostu)\n");
             }
 
-            // odczekanie chwili po zwolnieniu mostu
-            usleep(bridgeLeaveDelayMillis * 1000);
+            // odczekanie chwili po zwolnieniu mostu (w trybie nie fast)
+            if (!fast) {
+                usleep(bridgeLeaveDelayMillis * 1000);
+            }
 
             if (mode == 1) {
-                pthread_mutex_lock(&ticket_mutex);
-                current_number += 1;
-                carsTicket[carNumber-1] = -1; // oznaczenie, ze bilet zostal wykorzystany
-                pthread_mutex_unlock(&ticket_mutex);
-                pthread_cond_broadcast(&next_one);
+                if (pthread_mutex_lock(&ticket_mutex) == 0) {
+                    current_number += 1;
+                    carsTicket[carNumber-1] = -1; // oznaczenie, ze bilet zostal wykorzystany
+                    if (pthread_mutex_unlock(&ticket_mutex) != 0) {
+                        printf("\nNie udalo sie pthread_mutex_unlock, samochod=%d\n", carNumber);
+                        exit(EXIT_FAILURE);
+                    }
+                } else {
+                    printf("\nNie udalo sie pthread_mutex_lock, samochod=%d\n", carNumber);
+                }
+                if (pthread_cond_broadcast(&next_one) != 0) {
+                    printf("\nBlad dla pthread_cond_broadcast, samochod=%d\n", carNumber);
+                }
             }
-        pthread_mutex_unlock(&bridge);
+            
+            if (pthread_mutex_unlock(&bridge) != 0) {
+                printf("\nNie udalo sie zwolnic mostu, samochod=%d\n", carNumber);
+                exit(EXIT_FAILURE);
+            }
 
-        sleep(rand() % (maxSleepDelaySeconds+1));
+        } else {
+            printf("\nNie udalo sie wjechac na most, samochod=%d\n", carNumber);
+        }
+
+        visitCity();
     }
 
     return 0;
@@ -428,31 +470,58 @@ int main (int argc, char *argv[]) {
     mode = -1;
     N = -1;
     debug = 0;
+    fast = 0;
 
     // inicjalizacja semafora chroniacego wypisywanie na konsole
     if (sem_init(&printer, 0, 1) != 0) {
-        perror("Blad sem_init");
+        perror("Blad sem_init\n");
         return EXIT_FAILURE;
     }
 
     // zaladowanie argumentow z linii polecen
-    int result = loadCmdLineArgs(argc, argv, &mode, &N, &debug);
+    int result = loadCmdLineArgs(argc, argv, &mode, &N, &debug, &fast);
     if (result > 0) {
         printf("Blad przy czytaniu argumentow z linii polecen\n");
         return EXIT_FAILURE;
     }
 
     // dzialanie programu
-    pthread_mutex_init(&bridge, NULL);
+    if (pthread_mutex_init(&bridge, NULL) != 0) {
+        printf("Blad przy pthread_mutex_init!\n");
+        return EXIT_FAILURE;
+    } 
     if (mode == 1) {
-        pthread_cond_init(&next_one, NULL);
+        if (pthread_mutex_init(&ticket_mutex, NULL) != 0) {
+            printf("Blad przy pthread_mutex_init!\n");
+            return EXIT_FAILURE;
+        }
+        if (pthread_cond_init(&next_one, NULL) != 0) {
+            printf("Blad przy pthread_cond_init!\n");
+            return EXIT_FAILURE;
+        }
     }
 
     // allokacja tablic
     cars = (pthread_t*)malloc(N * sizeof(pthread_t));
+    if (cars == NULL) { 
+        printf("Nie udalo sie zaallokowac cars\n"); 
+        return EXIT_FAILURE; 
+    }
     carsNumbers = (int*)malloc(N * sizeof(int));
+    if (carsNumbers == NULL) { 
+        printf("Nie udalo sie zaallokowac carsNumbers\n"); 
+        return EXIT_FAILURE; 
+    }
     carsState = (char*)malloc(N * sizeof(char));
+    if (carsState == NULL) { 
+        printf("Nie udalo sie zaallokowac carsState\n"); 
+        return EXIT_FAILURE; 
+    }
     carsTicket = (int*)malloc(N * sizeof(int));
+    if (carsTicket == NULL) { 
+        printf("Nie udalo sie zaallokowac carsTicket\n"); 
+        return EXIT_FAILURE; 
+    }
 
     // zaladowanie wartosci wstepnych do tablicy carsState
     // przechowujacej stan w jakim znajduja sie poszczegolne
@@ -471,11 +540,17 @@ int main (int argc, char *argv[]) {
     // utworzenie watkow
     for ( i = 0; i < N; ++i ) {
         carsNumbers[i] = i;
-        pthread_create(&cars[i], NULL, driveAround, (void*)&carsNumbers[i]);
+        if (pthread_create(&cars[i], NULL, driveAround, (void*)&carsNumbers[i]) != 0) {
+            printf("Blad tworzenia pthread (create), i=%d\n", i);
+            return EXIT_FAILURE;
+        }
     }
 
     for ( i = 0; i < N; ++i ) {
-        pthread_join(cars[i], NULL);
+        if (pthread_join(cars[i], NULL) != 0) {
+            printf("Blad przy dolaczaniu do watkow (join), i=%d\n", i);
+            return EXIT_FAILURE;
+        }
     }
 
     // zwolnienie niepotrzebnych zmiennych
@@ -483,7 +558,10 @@ int main (int argc, char *argv[]) {
     free(carsNumbers);
     free(carsState);
     free(carsTicket);
-    pthread_mutex_destroy(&bridge);
+    if (pthread_mutex_destroy(&bridge) != 0) {
+        printf("Nie udalo sie usunac mutexa mostu (destory bridge)!\n");
+        return EXIT_FAILURE;
+    }
 
     return  EXIT_SUCCESS;
 }

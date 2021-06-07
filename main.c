@@ -6,24 +6,30 @@
 #include <unistd.h>
 #include <semaphore.h>
 
+// zmienne potrzebne do watkow
 sem_t printer;
 pthread_mutex_t bridge;
 pthread_cond_t next_one;
+pthread_t *cars;
 
+// zmienne potrzebne w trybie 1
 pthread_mutex_t ticket_mutex;
 int current_number = 0, next_number = 0;
 
-pthread_t *cars;
+// zmienne z informacjami na temat samochodow
 int *carsNumbers;
 char *carsState;
 int *carsTicket;
 
+// zmienne informujace o ustawieniach calego programu
 short mode;
 int N;
 short debug;
 
-const int bridgeLeaveDelayMillis = 0;
-const int maxSleepDelaySeconds = 0;
+// stale informujace o opoznieniach, jakie maja byc
+// uwzglednione w programie
+const int bridgeLeaveDelayMillis = 500; // ile milisekund ma trwac przejazd przez most
+const int maxSleepDelaySeconds = 5; // ile maksymalnie sekund moze trwac pobyt w miescie
 
 // prosta struktura przechowujaca dwie wartosci int
 // potrzebna do przechowywania numeru biletu samochodu
@@ -150,7 +156,25 @@ int loadCmdLineArgs(int argc, char *argv[], short* mode, int* N, short* debug) {
     return EXIT_SUCCESS;
 }
 
-
+// Funkcja wyswietlajaca obecny stan systemu (samochodow)
+//
+// W zaleznosci od wartosci zmiennej globalnej [debug]
+// Wyswietlana jest lista samochodow oczekujacych po
+// obu stronach mostu
+//
+// W przypadku trybu 0 opcja ta pokazuje kolejki, ale
+// nie musza one byc prezentowane w formie wiazacej
+// (w trybie 0 nie ma pilnowania kolejnosci przejazdu
+// samochodow - dany samochod moze miec losowo przydzielony
+// dostep do mostu, ale moze sie tez zdarzyc w trybie 0
+// ze dany samochod nie dostanie dostepu do mostu)
+//
+// W przypadku trybu 1 opcja [debug] ma sens, bo
+// w trybie 1 jest kolejkowanie samochodow przy
+// uzyciu systemu biletowego (samochod w momencie
+// ustawiania sie w kolejce do przejazdu przez most
+// otrzymuje bilet z numerkiem, na bazie ktorego
+// pozniej otrzyma pozwolenie na przejazd przez most)
 void printCurrentState() {
 
     int inA = 0, leavingA = 0, leavingB = 0, inB = 0, onBridge = -1, bridgeDirection = -1;

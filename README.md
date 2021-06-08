@@ -31,5 +31,12 @@ programie zmieni się którakolwiek z tych wartości.
 - B - w miescie B
 - b - czeka na wjazd na most opuszczajac miasto B
 
+# Format uruchomienia programu
+`./a.out [tryb] [N] (opcjonalnie: -debug, -fast)`
+
 # Dodatkowe informacje:
 - Dodana zostala dodatkowa flaga `-fast`, ktora powoduje wylaczenie oczekiwania na moscie oraz oczekiwania w miescie
+
+# Co udalo sie zrobic:
+- wersja na mutexach/semaforach (bez zmiennej warunkowej)
+- wersja ze zmienna warunkowa
